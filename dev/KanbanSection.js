@@ -107,13 +107,15 @@ define("KanbanSection", ["PageUtilities", "ConfigurationEnums"], function(PageUt
 
 			_getKanbanColumns: function() {
 				var profile = this.get("KanbanProfile");
-				var verticalPropertyName = this.getDataGridName("vertical");
+				var propertyName = profile && profile.KanbanColumnSettings
+					? "KanbanColumnSettings"
+					: this.getDataGridName("vertical");
 				var profileColumnsConfig = null;
 				var columns = [];
 				if (profile && profile.tiledConfig) {
 					columns = this._decodeColumnsSetingsFromProfile(profile.tiledConfig);
-				} else if (profile && profile[verticalPropertyName] && profile[verticalPropertyName].tiledConfig) {
-					columns = this._decodeColumnsSetingsFromProfile(profile[verticalPropertyName].tiledConfig);
+				} else if (profile && profile[propertyName] && profile[propertyName].tiledConfig) {
+					columns = this._decodeColumnsSetingsFromProfile(profile[propertyName].tiledConfig);
 				} else {
 					var entitySchema = this.entitySchema;
 					var primaryColumn = entitySchema.columns[entitySchema.primaryDisplayColumn.name];
@@ -257,7 +259,7 @@ define("KanbanSection", ["PageUtilities", "ConfigurationEnums"], function(PageUt
 					keepAlive: true
 				});
 				this.sandbox.subscribe("GridSettingsChanged", function(args) {
-					this.set("Profile", args.newProfileData);
+					this.set("KanbanProfile", args.newProfileData);
 					this._loadKanbanStorage();
 				}, this, [gridSettingsId]);
 			},
@@ -307,7 +309,7 @@ define("KanbanSection", ["PageUtilities", "ConfigurationEnums"], function(PageUt
 					this.Terrasoft.require(["profile!" + kanbanKey, "profile!" + verticalGridProfileKey],
 						function(kanbanProfile, verticalProfile) {
 							var profile = kanbanProfile && kanbanProfile.KanbanColumnSettings ?
-								kanbanProfile.KanbanColumnSettings : verticalProfile;
+								kanbanProfile : verticalProfile;
 							this.set("KanbanProfile", profile);
 							var lastStageFilterId = kanbanProfile ? kanbanProfile.lastStageFilterId : null;
 							this.set("LastStageFilterId", lastStageFilterId);
