@@ -72,18 +72,21 @@ define("KanbanSection", ["PageUtilities", "ConfigurationEnums"], function(PageUt
 				var hideSettings = !this._isKanban();
 				this.set("IsSortMenuVisible", hideSettings);
 				this.set("IsSummarySettingsVisible", hideSettings);
-				this._loadKanbanStorage();
+				if (this.firstLoadCompleted) {
+					this._setKanbanFilter();
+				}
 			},
 
 			afterFiltersUpdated: function() {
 				this.filtersInitialized = true;
 				this.callParent(arguments);
-				if (this._isKanban()) {
-					this._setKanbanFilter();
-				}
+				this._setKanbanFilter();
 			},
 
 			_setKanbanFilter: function() {
+				if (!this._isKanban()) {
+					return;
+				}
 				if (!this.kanbanLoading && this.filtersInitialized) {
 					var storage = this.get("CaseDataStorage");
 					var filters = this.getSerializableFilter(this.getFilters());
@@ -343,9 +346,6 @@ define("KanbanSection", ["PageUtilities", "ConfigurationEnums"], function(PageUt
 			},
 
 			_loadKanbanStorage: function() {
-				if (!this._isKanban()) {
-					return;
-				}
 				if (this.kanbanLoading === true) {
 					return;
 				} else {
@@ -366,6 +366,7 @@ define("KanbanSection", ["PageUtilities", "ConfigurationEnums"], function(PageUt
 								lastStageFilters: this._getLastStageFilters()
 							});
 							this.kanbanLoading = false;
+							this.firstLoadCompleted = true;
 							if (this.filtersInitialized) {
 								this._setKanbanFilter();
 							}
