@@ -61,6 +61,11 @@ define("KanbanSection", ["PageUtilities", "ConfigurationEnums"], function(PageUt
 
 			init: function(callback, scope) {
 				this.callParent([function() {
+					const isKanban = this._isKanban();
+					if (isKanban === false) {
+						Ext.callback(callback, scope);
+						return;
+					}
 					this.set("DcmCases", this.Ext.create("Terrasoft.Collection"));
 					this._initKanbanStorage();
 					this._loadKanbanProfile(callback, scope);
@@ -121,7 +126,7 @@ define("KanbanSection", ["PageUtilities", "ConfigurationEnums"], function(PageUt
 				}
 				return columns;
 			},
-			
+
 			_tryGetProfileColumns: function(columns) {
 				var profile = this.get("KanbanProfile");
 				var propertyName = profile && profile.KanbanColumnSettings
