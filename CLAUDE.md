@@ -1,0 +1,178 @@
+# Kanban — Creatio Package Dev Guide
+
+## What this project is
+
+A **Creatio (Terrasoft) platform package** that adds a Kanban board view to any section.
+It extends `BaseSectionV2` so every entity section can switch to Kanban view via a toolbar icon.
+
+The package lives in `Kanban/` (the Creatio-deployable artifact).
+Source lives in `src/` and is compiled to `Kanban/Files/src/kanban-min.js` by `build.js`.
+
+---
+
+## Repository layout
+
+```
+kanban/
+├── src/                          ← EDIT THESE
+│   ├── KanbanSection.js          ← outer AMD define wrapper + mixin object (attributes/methods)
+│   ├── CaseDataStorage.js        ← Terrasoft.CaseDataStorage + ActivityDataStorage
+│   ├── CollectionDataStorage.js  ← Terrasoft.Kanban.DataStorage (paginated ESQ)
+│   ├── KanbanBoard.js            ← Terrasoft.controls.KanbanBoard (Ext control)
+│   ├── KanbanBoardViewGenerator.js ← KanbanBoardViewGenerator AMD module
+│   ├── KanbanColumn.js           ← Terrasoft.controls.KanbanColumn (Ext control)
+│   ├── KanbanColumnViewConfigBuilder.js ← view config factory
+│   ├── KanbanColumnViewModel.js  ← Terrasoft.controls.KanbanColumnViewModel
+│   ├── KanbanElement.js          ← Terrasoft.controls.KanbanElement (card Ext control)
+│   ├── KanbanElementViewModel.js ← Terrasoft.controls.KanbanElementViewModel
+│   ├── css/
+│   │   ├── KanbanBoard.css
+│   │   ├── KanbanColumn.css
+│   │   └── KanbanElement.css
+│   ├── Enable_kanban_for_Activity.sql  ← one-time Postgres script to enable Activity Kanban
+│   └── require.config.txt              ← local dev RequireJS config (not used in build)
+│
+├── Kanban/                       ← Creatio package (deploy this)
+│   ├── descriptor.json           ← package metadata (v1.7.0, depends on ProductCore 7.8+)
+│   ├── Files/src/
+│   │   ├── kanban-min.js         ← BUILD OUTPUT — do not edit directly
+│   │   ├── kanban-min.css        ← BUILD OUTPUT — do not edit directly
+│   │   └── bootstrap.js          ← RequireJS bundle config loaded by Creatio
+│   ├── Schemas/
+│   │   ├── BaseSectionV2/        ← re-exports KanbanSection mixin into the platform's BaseSectionV2
+│   │   ├── MainHeaderSchema/     ← small fix: respects `visible` on icon buttons
+│   │   └── KanbanEmptyModule/    ← placeholder (empty)
+│   ├── Data/SysSettings_KanbanCDNUrl/  ← optional CDN URL system setting
+│   └── Resources/                ← localisation strings
+│
+├── build.js                      ← build script (Node.js, no dependencies)
+└── package.json
+```
+
+---
+
+## Build
+
+```bash
+npm run build          # one-shot build → writes Kanban/Files/src/kanban-min.js + kanban-min.css
+npm run watch          # same, but rebuilds on every src/ save
+```
+
+No npm packages required — `build.js` uses only Node.js built-ins.
+
+### How the build works
+
+`KanbanSection.js` is an AMD `define("KanbanSection", [...deps...], function() { return { ... }; })` wrapper.
+All other `src/*.js` files are injected **inside** that function, just before its `return {` statement.
+`KanbanBoardViewGenerator.js` keeps its own nested `define()` call — that is intentional (RequireJS bundle pattern).
+
+The `MainHeaderSchema` dependency is added to the define deps list by the build script
+(it is not in the source `KanbanSection.js` to keep the source clean).
+
+CSS files are concatenated: `KanbanElement.css` → `KanbanColumn.css` → `KanbanBoard.css`.
+
+---
+
+## Architecture
+
+### Data layer
+
+| Class | File | Role |
+|---|---|---|
+| `Terrasoft.CaseDataStorage` | CaseDataStorage.js | Column collection for DCM-based sections (cases/stages) |
+| `Terrasoft.ActivityDataStorage` | CaseDataStorage.js | Column collection for Activity section (uses `ActivityStatus` ESQ) |
+| `Terrasoft.Kanban.DataStorage` | CollectionDataStorage.js | Per-column paginated card collection |
+
+`CaseDataStorage` / `ActivityDataStorage` extend `BaseViewModelCollection`.
+Each item is a `KanbanColumnViewModel`.
+Each column holds a `Terrasoft.Kanban.DataStorage` instance in its `ViewModelItems` attribute.
+
+### View layer (Ext controls)
+
+| Control | File | Extends |
+|---|---|---|
+| `Terrasoft.KanbanBoard` | KanbanBoard.js | `Terrasoft.DcmStageContainer` |
+| `Terrasoft.KanbanColumn` | KanbanColumn.js | `Terrasoft.DcmStage` |
+| `Terrasoft.KanbanElement` | KanbanElement.js | `Terrasoft.DcmStageElement` |
+
+### ViewModel layer
+
+| Class | File | Extends |
+|---|---|---|
+| `Terrasoft.KanbanColumnViewModel` | KanbanColumnViewModel.js | `Terrasoft.DcmStageViewModel` |
+| `Terrasoft.KanbanElementViewModel` | KanbanElementViewModel.js | `Terrasoft.DcmStageElementViewModel` |
+
+### Section mixin (`KanbanSection.js`)
+
+Mixed into `BaseSectionV2` via the Creatio schema override in `Schemas/BaseSectionV2/`.
+Key methods:
+
+- `init` — loads kanban profile (column settings, last-stage filter), then initialises storage
+- `_isKanban()` — `true` when `ActiveViewName === "Kanban"`
+- `_loadKanbanStorage()` — dispatches to `_loadCaseKanbanStorage` or `_loadActivityKanbanStorage`
+- `_setKanbanFilter(filters, lastStageFilters)` — pushes section filters into `CaseDataStorage`
+- `loadMore` — loads the next page of cards when user scrolls to bottom
+- `moveKanbanElement(elementId, unsuccessfulColumnId)` — handles drag-to-unsuccessful-column
+
+---
+
+## Key concepts
+
+### Kanban view activation
+A "Kanban" entry is added to `DataViews` dynamically in `getDefaultDataViews` (lazy, only when DCM cases exist or `EnableKanbanForActivitySection` feature flag is on).
+
+### DCM vs Activity mode
+- **DCM mode** (default): columns come from DCM case stages via `DcmSchemaManager`. Enabled when `DcmCase` lookup resolves.
+- **Activity mode**: columns come from `ActivityStatus` lookup. Enabled by feature flag `EnableKanbanForActivitySection`. SQL to enable: `src/Enable_kanban_for_Activity.sql`.
+
+### Drag-and-drop
+Cards are `Terrasoft.DcmStageElement` (drag source).
+Columns are `Terrasoft.DcmReorderableContainer` (drop zone) with `groupName` = array of connected column IDs.
+Unsuccessful/terminal columns appear as a fixed bottom bar when dragging; registered as `DDTarget`.
+
+### Last-stage filter
+Users can configure a folder-based filter applied only to the terminal stage's cards.
+Stored in the kanban profile (`lastStageFilterId`).
+
+### Pagination
+`Terrasoft.Kanban.DataStorage` loads 7 cards per column by default (`rowCount: 7`).
+The board fires `loadMore` on window scroll-to-bottom; the section calls `storage.loadData()` to append the next page.
+
+---
+
+## Deploying to Creatio
+
+1. `npm run build`
+2. Install the `Kanban/` package via Creatio's Package Installer or file system deployment.
+3. The `bootstrap.js` is loaded automatically when the section page opens; it registers `KanbanSection` as an AMD bundle.
+
+---
+
+## Common tasks
+
+### Add a new method to the section mixin
+Edit `src/KanbanSection.js` inside the `methods: { ... }` object, then `npm run build`.
+
+### Change card rendering (columns, layout)
+Edit `src/KanbanElementViewModel.js` (`getViewConfig`, `generateAdditionalColumnViewConfig`).
+Card CSS is in `src/css/KanbanElement.css`.
+
+### Change column header / layout
+Edit `src/KanbanColumnViewConfigBuilder.js` (view config) or `src/KanbanColumn.js` (Ext control / template).
+Column CSS is in `src/css/KanbanColumn.css`.
+
+### Add a drag-and-drop behaviour
+The entry point is `KanbanColumnViewModel.move()` (called when a card is dropped into a column).
+`KanbanBoard.onElementDragDrop()` handles drops on unsuccessful columns.
+
+### Change pagination page size
+Set `pageRowCount` on `CaseDataStorage` / `ActivityDataStorage` or `rowCount` on the `Terrasoft.Kanban.DataStorage` created inside `createColumn()`.
+
+---
+
+## Platform dependencies (do not vendor)
+
+All of these are provided at runtime by the Creatio platform:
+`Terrasoft`, `Ext`, `define` (AMD/RequireJS), `DcmStageContainer`, `DcmStage`, `DcmStageElement`,
+`DcmStageViewModel`, `DcmStageElementViewModel`, `DcmSchemaManager`, `DcmElementSchemaManager`,
+`BaseViewModelCollection`, `EntitySchemaQuery`, `PageUtilities`, `ConfigurationEnums`, `GridUtilities`.

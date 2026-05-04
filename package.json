@@ -1,0 +1,13 @@
+{
+  "name": "kanban",
+  "version": "1.7.0",
+  "description": "Kanban board view for Creatio (Terrasoft) platform",
+  "private": true,
+  "scripts": {
+    "build": "node build.js",
+    "watch": "node build.js --watch"
+  },
+  "engines": {
+    "node": ">=14"
+  }
+}
