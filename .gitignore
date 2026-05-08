@@ -1,4 +1,7 @@
 .DS_Store
 *.zip
+*.gz
+*.nupkg
 Kanban/
 node_modules/
+builds/

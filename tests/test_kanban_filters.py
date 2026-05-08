@@ -104,3 +104,46 @@ async def test_owner_plus_previous_month_returns_records(kanban_page):
     )
 
     await _clear_all_filters(kanban_page)
+
+
+@pytest.mark.asyncio
+async def test_clear_period_filter_restores_baseline(kanban_page):
+    """
+    P0: Clearing the period filter after applying 'Previous month' restores
+    the unfiltered record count.
+
+    Assert: restored total == baseline total (±1 to allow for concurrent writes).
+    """
+    baseline = count_total(await read_column_counts(kanban_page))
+    assert baseline > 0, "Baseline has 0 records — test environment may be empty"
+
+    await apply_prev_month(kanban_page)
+    await _clear_all_filters(kanban_page)
+
+    restored = count_total(await read_column_counts(kanban_page))
+    assert abs(restored - baseline) <= 1, (
+        f"After clearing period filter, total {restored} differs from baseline {baseline} by more than 1. "
+        "Filter may not have been cleared properly."
+    )
+
+
+@pytest.mark.asyncio
+async def test_clear_owner_filter_restores_baseline(kanban_page):
+    """
+    P0: Clearing the owner filter after applying it restores the unfiltered count.
+
+    Assert: restored total == baseline total (±1).
+    """
+    baseline = count_total(await read_column_counts(kanban_page))
+    assert baseline > 0, "Baseline has 0 records — test environment may be empty"
+
+    selected = await set_owner(kanban_page, "Mary King")
+    assert selected, "Could not select owner — owner lookup may have changed"
+
+    await _clear_all_filters(kanban_page)
+
+    restored = count_total(await read_column_counts(kanban_page))
+    assert abs(restored - baseline) <= 1, (
+        f"After clearing owner filter, total {restored} differs from baseline {baseline} by more than 1. "
+        "Filter may not have been cleared properly."
+    )

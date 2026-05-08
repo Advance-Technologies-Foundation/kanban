@@ -140,11 +140,37 @@ The board fires `loadMore` on window scroll-to-bottom; the section calls `storag
 
 ---
 
+## Release build (packaging for installation)
+
+All intermediate files go into `builds/` — never into the project root.
+
+```bash
+mkdir -p builds
+npm run build
+clio generate-pkg-zip Kanban -d builds/Kanban.gz
+cd builds && zip Kanban.zip Kanban.gz && cd ..
+```
+
+Result: `builds/Kanban.zip` — ready to upload via Creatio UI Package Installer.
+
+### Why this structure
+- `builds/Kanban.gz` — clio binary format (proprietary, not tar.gz); required by `generate-pkg-zip`
+- `builds/Kanban.zip` — zip wrapping the `.gz`; what the Creatio UI `UploadPackage` endpoint accepts
+- Uploading `.gz` directly → HTTP 400
+- Uploading a zip with raw package files (not wrapping `.gz`) → "name does not match descriptor.json"
+- The zip filename and the `.gz` filename inside **must** match `"Name"` in `Kanban/descriptor.json` exactly (i.e. `Kanban`)
+
+### Install via CLI (no zip needed)
+```bash
+clio push-pkg Kanban -e <env-name>
+```
+
 ## Deploying to Creatio
 
 1. `npm run build`
-2. Install the `Kanban/` package via Creatio's Package Installer or file system deployment.
-3. The `bootstrap.js` is loaded automatically when the section page opens; it registers `KanbanSection` as an AMD bundle.
+2. Build the install package: see **Release build** section above.
+3. Upload `builds/Kanban.zip` via **Configuration → Packages → Install package from file**.
+4. The `bootstrap.js` is loaded automatically when the section page opens; it registers `KanbanSection` as an AMD bundle.
 
 ---
 
@@ -251,6 +277,59 @@ pytest tests/ -v
   stays open.
 - Always call `force_clear_owner` / `clearPeriodFilter` before each test to
   avoid filter state leaking across runs.
+
+---
+
+## Test task list
+
+Planned tests to implement before each release are tracked in `TASKS.md`.
+
+### Structure of TASKS.md
+
+Each entry is one pytest function with this shape:
+
+```
+### [x/space] test_function_name — one-line description
+**File:** tests/test_xxx.py
+**Steps:** numbered implementation steps
+**Assert:** what must be true
+**Notes:** tricky details, selector caveats
+```
+
+Priorities:
+- **P0** — suite must be fully green to ship
+- **P1** — named features; needed for confident release
+- **P2** — edge cases; add opportunistically
+
+### Adding a new planned test
+
+1. Add a `### [ ] test_name` entry to the appropriate priority block in `TASKS.md`.
+2. Specify file, steps, assert, and any known selector hints.
+3. When implemented, change `[ ]` → `[x]`.
+
+### Picking up a task
+
+1. Find an unchecked `[ ]` item in `TASKS.md`.
+2. Follow the mandatory **Bug-fix workflow** above (write stub → confirm it fails → implement → full suite green).
+3. Mark the checkbox `[x]` and commit together with the test file.
+
+### Release gate
+
+Before tagging a release, run:
+
+```bash
+pytest tests/ -v
+```
+
+All P0 tests must pass. P1 failures should be investigated and either fixed or explicitly deferred with a comment. P2 failures are acceptable to defer.
+
+### Shared helpers
+
+Common Playwright helpers live in `tests/conftest.py`.
+When multiple tests need the same interaction, extract it into `conftest.py` rather than duplicating.
+Planned helpers to add (see TASKS.md) include:
+`switch_to_grid`, `switch_to_kanban`, `apply_period`, `count_visible_cards`,
+`get_column_count_by_index`, `get_terminal_column_count`.
 
 ---
 

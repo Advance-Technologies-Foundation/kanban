@@ -112,6 +112,72 @@ def count_total(cols: list[str]) -> int:
     return sum(int(m.group(1)) for c in cols for m in [re.search(r'\[(\d+)\]', c)] if m)
 
 
+async def switch_to_grid(page):
+    """Click Grid view icon and wait for grid to render."""
+    btn = await page.query_selector('[data-item-marker="GridDataView"]')
+    if btn:
+        await btn.click()
+    await _idle(page, 15000)
+    await page.wait_for_timeout(2000)
+
+
+async def switch_to_kanban(page):
+    """Click Kanban view icon and wait for .dcm-stage-wrap."""
+    for sel in ['[data-item-marker="Kanban"]', '[data-item-marker="KanbanDataView"]']:
+        btn = await page.query_selector(sel)
+        if btn:
+            await btn.click()
+            break
+    await page.wait_for_selector(".dcm-stage-wrap", timeout=60000)
+    await _idle(page, 15000)
+    await page.wait_for_timeout(2000)
+
+
+async def apply_period(page, label: str):
+    """Open period dropdown and click a named period item (e.g. 'Current month')."""
+    menu = await page.query_selector('[data-item-marker="month"] .t-btn-menuWrap')
+    await menu.click()
+    await page.wait_for_timeout(1000)
+    item = await page.query_selector(f'li:has-text("{label}")')
+    await item.click()
+    await _idle(page, 20000)
+    await page.wait_for_timeout(5000)
+
+
+async def count_visible_cards(page) -> int:
+    """Count rendered .dcm-stage-element-view-wrap elements across all columns."""
+    return await page.evaluate(
+        "() => document.querySelectorAll('.dcm-stage-element-view-wrap').length"
+    )
+
+
+async def get_column_count_by_index(page, index: int) -> int:
+    """Return the numeric count badge of the nth column."""
+    import re
+    raw = await page.evaluate(f"""() => {{
+        const cols = document.querySelectorAll('.dcm-stage-wrap');
+        if ({index} >= cols.length) return '0';
+        const badge = cols[{index}].querySelector('.kanban-column-summary');
+        return badge ? badge.innerText.trim() : '0';
+    }}""")
+    m = re.search(r'\d+', str(raw))
+    return int(m.group()) if m else 0
+
+
+async def get_terminal_column_count(page) -> int:
+    """Return the count badge of the last (terminal) column."""
+    import re
+    raw = await page.evaluate("""() => {
+        const cols = document.querySelectorAll('.dcm-stage-wrap');
+        if (!cols.length) return '0';
+        const last = cols[cols.length - 1];
+        const badge = last.querySelector('.kanban-column-summary');
+        return badge ? badge.innerText.trim() : '0';
+    }""")
+    m = re.search(r'\d+', str(raw))
+    return int(m.group()) if m else 0
+
+
 async def apply_prev_month(page):
     menu = await page.query_selector('[data-item-marker="month"] .t-btn-menuWrap')
     await menu.click()
