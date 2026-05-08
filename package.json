@@ -1,6 +1,6 @@
 {
   "name": "kanban",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "Kanban board view for Creatio (Terrasoft) platform",
   "private": true,
   "scripts": {
