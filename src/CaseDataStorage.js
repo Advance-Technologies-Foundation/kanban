@@ -255,10 +255,7 @@ Ext.define("Terrasoft.CaseDataStorage", {
 		var filters = Terrasoft.createFilterGroup();
 		filters.logicalOperation = Terrasoft.LogicalOperatorType.AND;
 		if (this.filters) {
-			var serializationInfo = this.filters.getDefSerializationInfo();
-			serializationInfo.serializeFilterManagerInfo = true;
-			var filtersCopy = Terrasoft.deserialize(this.filters.serialize(serializationInfo));
-			filters.addItem(filtersCopy);
+			filters.addItem(this.filters);
 		}
 		var isLast = stageId == this.lastStageId;
 		if (isLast && this.lastStageFilters) {
