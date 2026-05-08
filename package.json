@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "build": "node build.js",
-    "watch": "node build.js --watch"
+    "watch": "node build.js --watch",
+    "test": "pytest tests/ -v"
   },
   "engines": {
     "node": ">=14"

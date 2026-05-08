@@ -170,6 +170,90 @@ Set `pageRowCount` on `CaseDataStorage` / `ActivityDataStorage` or `rowCount` on
 
 ---
 
+## Bug-fix workflow (mandatory)
+
+Every bug fix **must** follow this sequence — no exceptions:
+
+1. **Write a failing reproduction test first.**
+   Add a test in `tests/test_kanban_filters.py` (or a new file) that fails on
+   the current code and captures the exact symptom reported.
+   Run it to confirm it fails: `pytest tests/ -k <test_name>`.
+
+2. **Fix the code.**
+   Edit the relevant `src/` file(s).
+
+3. **Rebuild.**
+   `npm run build`
+
+4. **Deploy to the test environment.**
+   `clio push-pkg Kanban -e kanban`
+
+5. **Run the full test suite and confirm:**
+   - The new reproduction test now **passes**.
+   - All previously passing tests still **pass**.
+   ```
+   pytest tests/ -v
+   ```
+
+A fix is not done until step 5 is green.
+
+---
+
+## Tests
+
+End-to-end Playwright tests live in `tests/`.
+They run against the live Creatio environment defined by `KANBAN_BASE_URL`.
+
+### Setup (one-time)
+
+```bash
+pip install -r tests/requirements.txt
+playwright install chromium
+```
+
+### Run
+
+```bash
+# against default env (185574-crm-bundle.creatio.com, user clio)
+pytest tests/ -v
+
+# against a different env
+KANBAN_BASE_URL=https://my-env.creatio.com \
+KANBAN_USER=admin \
+KANBAN_PASSWORD=secret \
+pytest tests/ -v
+```
+
+### Selector reference (Opportunity Kanban, ExtJS shell)
+
+| Element | Selector |
+|---|---|
+| Kanban loaded | `.dcm-stage-wrap` |
+| Column caption | `.stage-tools .t-label` |
+| Column record count | `.kanban-column-summary` |
+| Month period dropdown | `[data-item-marker="month"] .t-btn-menuWrap` |
+| Clear period filter | `[data-item-marker="clearPeriodFilter"]` |
+| Owner filter button | `[data-item-marker="OwnerFixedFilterBtn"]` |
+| Lookup search input | `#searchEdit-el` |
+| Lookup search button | `[data-item-marker="searchButton"]` |
+| Lookup result rows | `.containerLookupPage .grid-primary-column` |
+| Lookup confirm button | `[data-item-marker="selectButton"]` |
+| Login username | `#loginEdit-el` |
+| Login password | `#passwordEdit-el` |
+| Login submit | `.t-btn-style-green` |
+
+**Notes:**
+- The Kanban board lives inside a Freedom UI shell (`crt-` web components) that
+  wraps the ExtJS section. Wait for `.dcm-stage-wrap`, not a fixed timeout.
+- The owner filter label (`OwnerFixedFilterBtn` inner text) is unreliable —
+  verify by checking record counts, not the label.
+- Double-click a lookup row to select; then click `selectButton` if the dialog
+  stays open.
+- Always call `force_clear_owner` / `clearPeriodFilter` before each test to
+  avoid filter state leaking across runs.
+
+---
+
 ## Platform dependencies (do not vendor)
 
 All of these are provided at runtime by the Creatio platform:
