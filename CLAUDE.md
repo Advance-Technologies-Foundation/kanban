@@ -218,7 +218,7 @@ Every bug fix **must** follow this sequence — no exceptions:
    - The new reproduction test now **passes**.
    - All previously passing tests still **pass**.
    ```
-   pytest tests/ -v
+   ./run_tests.sh
    ```
 
 A fix is not done until step 5 is green.
@@ -239,16 +239,42 @@ playwright install chromium
 
 ### Run
 
-```bash
-# against default env (185574-crm-bundle.creatio.com, user clio)
-pytest tests/ -v
+Use `run_tests.sh` — it handles parallelism, dependency checks, and auth state automatically:
 
-# against a different env
+```bash
+# Full suite — 3 parallel workers (~3.5 min, vs ~12 min sequential)
+./run_tests.sh
+
+# Sequential — easier to read logs when debugging
+./run_tests.sh -n 1
+
+# Single test by name
+./run_tests.sh -k test_owner_plus_previous_month_returns_records
+
+# Single file
+./run_tests.sh -f tests/test_kanban_filters.py
+
+# Force re-login (e.g. after password change or session expiry)
+./run_tests.sh --fresh
+
+# Against a different environment
 KANBAN_BASE_URL=https://my-env.creatio.com \
 KANBAN_USER=admin \
 KANBAN_PASSWORD=secret \
-pytest tests/ -v
+./run_tests.sh
 ```
+
+### How parallelism works
+
+- **Auth state file** (`/tmp/kanban_auth.json`): login is performed once at the start of
+  each run and the browser cookies/localStorage are saved. All parallel workers load this
+  file — no re-login per test. Protected by a lock file so workers don't race on creation.
+- **pytest-xdist `-n 3`**: 3 workers run tests simultaneously. Each worker gets its own
+  browser process and its own page per test (fully isolated).
+- **DnD tests** (`test_kanban_dnd.py`) are marked `@pytest.mark.xdist_group("dnd")` so
+  they always run in the same worker sequentially — they mutate card stages in the DB and
+  would corrupt counts if run in parallel with filter tests.
+- Auth state is cached between runs. Use `--fresh` to force a new login.
 
 ### Selector reference (Opportunity Kanban, ExtJS shell)
 
@@ -318,7 +344,7 @@ Priorities:
 Before tagging a release, run:
 
 ```bash
-pytest tests/ -v
+./run_tests.sh
 ```
 
 All P0 tests must pass. P1 failures should be investigated and either fixed or explicitly deferred with a comment. P2 failures are acceptable to defer.

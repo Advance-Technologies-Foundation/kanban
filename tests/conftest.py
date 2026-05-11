@@ -5,8 +5,21 @@ Environment variables (override defaults for non-standard envs):
   KANBAN_BASE_URL   base URL of the Creatio instance
   KANBAN_USER       login username   (default: clio)
   KANBAN_PASSWORD   login password
+
+Performance strategy
+  Auth is performed ONCE per test run and saved to /tmp/kanban_auth.json
+  (Playwright storage_state — cookies + localStorage). All tests load
+  that state so no re-login is needed per test. The file is protected by
+  a lock file so xdist workers don't race each other on creation.
+
+  Each test still creates its own browser/context/page (fully isolated),
+  so pytest-xdist -n N works without any event-loop sharing concerns.
 """
+import asyncio
+import fcntl
 import os
+import time
+
 import pytest
 import pytest_asyncio
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
@@ -17,22 +30,20 @@ PASSWORD  = os.getenv("KANBAN_PASSWORD", "Supervisor2!")
 
 SECTION_URL = BASE_URL + "/0/Shell/#SectionModuleV2/OpportunitySectionV2"
 
-
-@pytest_asyncio.fixture(scope="session")
-async def browser():
-    async with async_playwright() as pw:
-        b = await pw.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
-        )
-        yield b
-        await b.close()
+AUTH_FILE = "/tmp/kanban_auth.json"
+AUTH_LOCK = "/tmp/kanban_auth.lock"
 
 
-@pytest_asyncio.fixture
-async def kanban_page(browser):
-    """Authenticated page opened to the Opportunity Kanban view, all filters cleared."""
-    ctx = await browser.new_context(
+# ── auth-state bootstrap ─────────────────────────────────────────────────────
+
+async def _create_auth_file():
+    """Login once and persist cookies/localStorage to AUTH_FILE."""
+    pw = await async_playwright().start()
+    b = await pw.chromium.launch(
+        headless=True,
+        args=["--no-sandbox", "--disable-dev-shm-usage"],
+    )
+    ctx = await b.new_context(
         viewport={"width": 1600, "height": 900},
         user_agent=(
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -41,26 +52,99 @@ async def kanban_page(browser):
     )
     page = await ctx.new_page()
 
-    # Login
     await page.goto(BASE_URL + "/Login/NuiLogin.aspx")
     await _idle(page, 20000)
     await page.fill("#loginEdit-el", USERNAME)
     await page.fill("#passwordEdit-el", PASSWORD)
     await page.click(".t-btn-style-green")
     await _idle(page, 30000)
-    await page.wait_for_timeout(3000)
+    await page.wait_for_timeout(2000)
 
-    # Open Kanban
-    await page.goto(SECTION_URL)
-    await page.wait_for_selector(".dcm-stage-wrap", timeout=90000)
-    await page.wait_for_timeout(3000)
+    await ctx.storage_state(path=AUTH_FILE)
+    await b.close()
+    await pw.stop()
 
-    # Clear any stale filters from a previous session
-    await _clear_all_filters(page)
 
-    yield page
+def _ensure_auth_file():
+    """Create AUTH_FILE if absent; safe to call from multiple xdist workers."""
+    if os.path.exists(AUTH_FILE):
+        return
 
-    await ctx.close()
+    lock = open(AUTH_LOCK, "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)       # one worker at a time
+        if not os.path.exists(AUTH_FILE):       # re-check after acquiring
+            asyncio.run(_create_auth_file())
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def auth_state():
+    """Session fixture: guarantees AUTH_FILE exists before any test runs."""
+    _ensure_auth_file()
+    yield
+
+
+# ── main page fixture ─────────────────────────────────────────────────────────
+
+@pytest_asyncio.fixture
+async def kanban_page(auth_state):
+    """Authenticated page at the Opportunity Kanban view, all filters cleared.
+
+    Loads cookies from AUTH_FILE — no login round-trip per test.
+    """
+    async with async_playwright() as pw:
+        b = await pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
+        )
+        ctx = await b.new_context(
+            viewport={"width": 1600, "height": 900},
+            storage_state=AUTH_FILE,
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 Chrome/120 Safari/537.36"
+            ),
+        )
+        page = await ctx.new_page()
+
+        await page.goto(SECTION_URL)
+        await _idle(page, 30000)
+        await page.wait_for_timeout(2000)
+
+        # Activate Kanban view if the saved profile left Grid active
+        dcm = await page.query_selector('.dcm-stage-wrap')
+        if not dcm or not await dcm.is_visible():
+            for sel in ['[data-item-marker="Kanban"]', '[data-item-marker="KanbanDataView"]']:
+                btn = await page.query_selector(sel)
+                if btn and await btn.is_visible():
+                    await btn.click()
+                    await _idle(page, 15000)
+                    break
+
+        await page.wait_for_selector(".dcm-stage-wrap", timeout=90000)
+        await page.wait_for_timeout(2000)
+
+        try:
+            await page.wait_for_selector(".kanban-element-wrap", timeout=25000)
+        except PWTimeout:
+            pass
+        await page.wait_for_timeout(2000)
+
+        await _clear_all_filters(page)
+
+        try:
+            await page.wait_for_selector(".kanban-element-wrap", timeout=20000)
+        except PWTimeout:
+            pass
+        await page.wait_for_timeout(1000)
+
+        yield page
+
+        await ctx.close()
+        await b.close()
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -145,9 +229,9 @@ async def apply_period(page, label: str):
 
 
 async def count_visible_cards(page) -> int:
-    """Count rendered .dcm-stage-element-view-wrap elements across all columns."""
+    """Count rendered .kanban-element-wrap elements across all columns."""
     return await page.evaluate(
-        "() => document.querySelectorAll('.dcm-stage-element-view-wrap').length"
+        "() => document.querySelectorAll('.kanban-element-wrap').length"
     )
 
 
@@ -212,15 +296,32 @@ async def set_owner(page, search_name: str) -> str:
         srch = await page.query_selector('[data-item-marker="searchButton"]')
         if srch:
             await srch.click()
-        await page.wait_for_timeout(3000)
+        first_word = search_name.split()[0].lower()
+        for _ in range(4):
+            await page.wait_for_timeout(2000)
+            rows = await page.query_selector_all('.containerLookupPage .grid-primary-column')
+            matched = False
+            for r in rows:
+                if first_word in (await r.inner_text()).lower():
+                    matched = True
+                    break
+            if matched:
+                break
 
     rows = await page.query_selector_all('.containerLookupPage .grid-primary-column')
     if not rows:
         await page.keyboard.press("Escape")
         return ""
 
-    selected = (await rows[0].inner_text()).strip()
-    await rows[0].dblclick()
+    first_word = search_name.split()[0].lower()
+    target_row = rows[0]
+    for r in rows:
+        if first_word in (await r.inner_text()).lower():
+            target_row = r
+            break
+
+    selected = (await target_row.inner_text()).strip()
+    await target_row.dblclick()
     await page.wait_for_timeout(2000)
 
     lp = await page.query_selector('.containerLookupPage')

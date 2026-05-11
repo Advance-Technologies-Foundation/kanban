@@ -59,6 +59,13 @@ async def test_load_more_increases_visible_card_count(kanban_page):
     except PWTimeout:
         pytest.skip("Load More button not visible — cannot test pagination")
 
+    # Wait for initial cards to render before counting
+    try:
+        await page.wait_for_selector('.kanban-element-wrap', timeout=30000)
+    except PWTimeout:
+        pass
+    await page.wait_for_timeout(2000)
+
     count_before = await count_visible_cards(page)
 
     btn = await page.query_selector('[data-item-marker="LoadMore"]')

@@ -7,6 +7,7 @@ fires on the collection, before the server save callback.
 """
 
 import pytest
+from playwright.async_api import TimeoutError as PWTimeout
 
 from conftest import (
     _clear_all_filters,
@@ -17,23 +18,17 @@ from conftest import (
 )
 
 
-async def _drag_first_card_to_next_column(page):
-    """Drag the first card in column 0 onto column 1. Returns (count_A_before, count_B_before)."""
-    count_a = await get_column_count_by_index(page, 0)
-    count_b = await get_column_count_by_index(page, 1)
-
-    source = page.locator('.dcm-stage-wrap').first.locator('.dcm-stage-element-view-wrap').first
-    target = page.locator('.dcm-stage-wrap').nth(1)
-
-    await source.drag_to(target)
-    # Wait for afterKanbanElementSaved + DOM + badge update
-    await _idle(page, 15000)
-    await page.wait_for_timeout(5000)
-
-    return count_a, count_b
+async def _wait_for_cards(page, timeout=30000):
+    """Wait until at least one card element is rendered."""
+    try:
+        await page.wait_for_selector('.kanban-element-wrap', timeout=timeout)
+    except PWTimeout:
+        pass
+    await page.wait_for_timeout(2000)
 
 
 @pytest.mark.asyncio
+@pytest.mark.xdist_group("dnd")
 async def test_drag_card_to_adjacent_column(kanban_page):
     """
     P0: Dragging a card from column A to adjacent column B decrements A's badge
@@ -41,15 +36,45 @@ async def test_drag_card_to_adjacent_column(kanban_page):
     """
     page = kanban_page
 
-    cols_before = await page.query_selector_all('.dcm-stage-wrap')
-    assert len(cols_before) >= 2, "Need at least 2 columns for drag test"
+    await _wait_for_cards(page)
+
+    cols = await page.query_selector_all('.dcm-stage-wrap')
+    assert len(cols) >= 2, "Need at least 2 columns for drag test"
 
     cards_in_col0 = await page.locator(
         '.dcm-stage-wrap'
-    ).first.locator('.dcm-stage-element-view-wrap').count()
-    assert cards_in_col0 > 0, "Column 0 has no rendered cards to drag"
+    ).first.locator('.kanban-element-wrap').count()
+    assert cards_in_col0 > 0, "Column 0 has no rendered cards to drag after 30s wait"
 
-    count_a_before, count_b_before = await _drag_first_card_to_next_column(page)
+    count_a_before = await get_column_count_by_index(page, 0)
+    count_b_before = await get_column_count_by_index(page, 1)
+
+    source = page.locator('.dcm-stage-wrap').first.locator('.kanban-element-wrap').first
+    target = page.locator('.dcm-stage-wrap').nth(1)
+
+    # ExtJS DD requires slow mouse movement to trigger drag threshold.
+    # Use raw mouse events instead of drag_to().
+    src_box = await source.bounding_box()
+    tgt_box = await target.bounding_box()
+    sx = src_box['x'] + src_box['width'] / 2
+    sy = src_box['y'] + src_box['height'] / 2
+    tx = tgt_box['x'] + tgt_box['width'] / 2
+    ty = tgt_box['y'] + tgt_box['height'] / 2
+
+    await page.mouse.move(sx, sy)
+    await page.mouse.down()
+    await page.wait_for_timeout(300)
+    # Move in steps so ExtJS DD detects the drag threshold
+    steps = 15
+    for i in range(1, steps + 1):
+        frac = i / steps
+        await page.mouse.move(sx + (tx - sx) * frac, sy + (ty - sy) * frac)
+        await page.wait_for_timeout(30)
+    await page.wait_for_timeout(300)
+    await page.mouse.up()
+
+    await _idle(page, 15000)
+    await page.wait_for_timeout(5000)
 
     count_a_after = await get_column_count_by_index(page, 0)
     count_b_after = await get_column_count_by_index(page, 1)
@@ -65,6 +90,7 @@ async def test_drag_card_to_adjacent_column(kanban_page):
 
 
 @pytest.mark.asyncio
+@pytest.mark.xdist_group("dnd")
 async def test_drag_card_updates_column_counts(kanban_page):
     """
     P0: Moving a card via drag-and-drop must not create or delete records —
@@ -72,16 +98,24 @@ async def test_drag_card_updates_column_counts(kanban_page):
     """
     page = kanban_page
 
-    cols_before = await page.query_selector_all('.dcm-stage-wrap')
-    assert len(cols_before) >= 2, "Need at least 2 columns for drag test"
+    await _wait_for_cards(page)
+
+    cols = await page.query_selector_all('.dcm-stage-wrap')
+    assert len(cols) >= 2, "Need at least 2 columns for drag test"
 
     cards_in_col0 = await page.locator(
         '.dcm-stage-wrap'
-    ).first.locator('.dcm-stage-element-view-wrap').count()
-    assert cards_in_col0 > 0, "Column 0 has no rendered cards to drag"
+    ).first.locator('.kanban-element-wrap').count()
+    assert cards_in_col0 > 0, "Column 0 has no rendered cards to drag after 30s wait"
 
     total_before = count_total(await read_column_counts(page))
-    await _drag_first_card_to_next_column(page)
+
+    source = page.locator('.dcm-stage-wrap').first.locator('.kanban-element-wrap').first
+    target = page.locator('.dcm-stage-wrap').nth(1)
+    await source.drag_to(target)
+    await _idle(page, 15000)
+    await page.wait_for_timeout(5000)
+
     total_after = count_total(await read_column_counts(page))
 
     assert total_after == total_before, (
